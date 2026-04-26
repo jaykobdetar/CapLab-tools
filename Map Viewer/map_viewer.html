@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Capitalism Lab — Map Viewer</title>
+<style>
+  :root {
+    --bg: #1a1d22;
+    --panel: #232830;
+    --panel-2: #2c333d;
+    --line: #3a414c;
+    --text: #e6e8eb;
+    --text-dim: #8a92a0;
+    --accent: #6ea8ff;
+    --accent-warm: #ffb84d;
+    --good: #5cd17a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  body {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    grid-template-rows: auto 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  header h1 {
+    margin: 0; font-size: 14px; font-weight: 600;
+    color: var(--text); letter-spacing: 0.2px;
+  }
+  header h1 .sub { color: var(--text-dim); font-weight: 400; margin-left: 6px; }
+  .group {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .group label { color: var(--text-dim); font-size: 12px; }
+  select, input[type=file], button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover, select:hover { border-color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  input[type=file] { padding: 3px; }
+  input[type=range] { width: 120px; }
+  label.toggle {
+    display: flex; align-items: center; gap: 4px;
+    color: var(--text-dim); font-size: 12px; cursor: pointer;
+  }
+  label.toggle input { margin: 0; }
+
+  #map-area {
+    position: relative;
+    overflow: hidden;
+    background: #0f1216;
+    cursor: crosshair;
+  }
+  #map-area.panning { cursor: grabbing; }
+  /* Wrapper that holds canvas + cell overlays. Rotated when diamond view is on. */
+  #map-wrap {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+  #map-canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    position: absolute; top: 0; left: 0;
+  }
+  #hover-cell {
+    position: absolute;
+    border: 1px solid #fff;
+    pointer-events: none;
+    box-shadow: 0 0 0 1px #000;
+  }
+  #selected-cell {
+    position: absolute;
+    border: 2px solid var(--accent-warm);
+    pointer-events: none;
+    box-shadow: 0 0 0 2px #000;
+  }
+  #status {
+    position: absolute; bottom: 8px; left: 8px;
+    padding: 4px 8px;
+    background: rgba(0,0,0,0.6);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+    pointer-events: none;
+    max-width: calc(100% - 16px);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #legend {
+    position: absolute; top: 8px; right: 8px;
+    padding: 8px 10px;
+    background: rgba(0,0,0,0.7);
+    border-radius: 4px;
+    font-size: 11px;
+    pointer-events: none;
+    max-width: 280px;
+  }
+  #legend .row {
+    display: flex; align-items: center; gap: 6px;
+    margin: 2px 0;
+  }
+  #legend .swatch { width: 12px; height: 12px; border: 1px solid #000; }
+
+  #drop-overlay {
+    position: absolute; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(110, 168, 255, 0.15);
+    border: 2px dashed var(--accent);
+    color: var(--accent);
+    font-size: 16px; font-weight: 600;
+    pointer-events: none;
+    z-index: 10;
+  }
+  body.dragging #drop-overlay { display: flex; }
+
+  #empty-state {
+    position: absolute; inset: 0;
+    display: flex;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 10px;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 30px;
+  }
+  #empty-state h2 { margin: 0; color: var(--text); font-size: 18px; }
+  #empty-state code {
+    background: var(--panel-2);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+  #empty-state.hidden { display: none; }
+
+  aside#sidebar {
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    overflow-y: auto;
+    padding: 14px;
+  }
+  aside h2 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+  aside .meta {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+    line-height: 1.6;
+  }
+  aside .meta b { color: var(--text); }
+  aside .cell-info {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  aside .cell-info .coord {
+    font-size: 14px; font-weight: 600;
+    color: var(--accent-warm);
+    margin-bottom: 8px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  }
+  aside .field {
+    display: flex; justify-content: space-between;
+    padding: 2px 0;
+    border-bottom: 1px dotted var(--line);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11.5px;
+  }
+  aside .field:last-child { border-bottom: none; }
+  aside .field .k { color: var(--text-dim); }
+  aside .field .v { color: var(--text); }
+  aside .field .v.true  { color: var(--good); }
+  aside .field .v.false { color: var(--text-dim); }
+
+  aside .summary {
+    background: var(--panel-2);
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+  aside .placeholder {
+    color: var(--text-dim); font-style: italic;
+    text-align: center; padding: 20px 10px;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 6px; border-radius: 8px;
+    font-size: 10.5px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
+  .pill.firm    { background: #4a1f1f; color: #ff9090; border-color: #6b2929; }
+  .pill.firmln  { background: #4a3220; color: #ffba80; border-color: #6b4a30; }
+  .pill.bldg    { background: #3d1f4a; color: #d290ff; border-color: #5a2a6c; }
+  .pill.urban   { background: #4a3a1f; color: #ffeaa0; border-color: #6b572a; }
+  .pill.land    { background: #4a3f1f; color: #ffd980; border-color: #6b5a29; }
+  .pill.road    { background: #2c3540; color: #b0bdd0; border-color: #3f4a59; }
+  .pill.vehicle { background: #1f2c4a; color: #90b0ff; border-color: #2a3f6c; }
+  .pill.empty   { background: #20272f; color: var(--text-dim); border-color: var(--line); }
+  .pill.water   { background: #1c2c3d; color: #6ea8d8; border-color: #2c4258; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Capitalism Lab Map Viewer<span class="sub">— load a <code>town_*.json</code> from <code>map_dump/</code></span></h1>
+  <div class="group">
+    <label>File</label>
+    <input type="file" id="file-input" accept=".json,application/json">
+  </div>
+  <div class="group">
+    <label>Mode</label>
+    <select id="mode">
+      <option value="game">Game-like (terrain + overlay)</option>
+      <option value="tile_type">Tile type</option>
+      <option value="walker_terrain">Walker terrain (water/land)</option>
+      <option value="type_flags">Type flags (categorical)</option>
+      <option value="zone_tier">Zone tier</option>
+      <option value="land_value">Land value (heatmap)</option>
+      <option value="dev_level">Dev level (heatmap)</option>
+      <option value="traffic_index">Traffic (heatmap)</option>
+      <option value="firm_type">Firm type (resolved)</option>
+      <option value="owner">Owner group (resolved)</option>
+      <option value="sprite_index">Sprite atlas index (hashed)</option>
+    </select>
+  </div>
+  <div class="group">
+    <label>Cell px</label>
+    <input type="range" id="cell-size" min="1" max="20" value="4">
+    <span id="cell-size-val" style="width:24px; text-align:right; color:var(--text-dim);">4</span>
+  </div>
+  <div class="group">
+    <label class="toggle"><input type="checkbox" id="show-roads" checked> roads</label>
+    <label class="toggle"><input type="checkbox" id="show-grid"> grid</label>
+    <label class="toggle"><input type="checkbox" id="diamond" checked> diamond</label>
+  </div>
+  <div class="group">
+    <button id="fit-btn" title="Fit map to view (F)">Fit</button>
+    <button id="reset-btn" title="Reset zoom & pan (0)">Reset</button>
+  </div>
+</header>
+
+<div id="map-area">
+  <div id="empty-state">
+    <h2>No map loaded</h2>
+    <div>Drag a JSON file here, or use the file picker above.</div>
+    <div style="font-size:11px; opacity: 0.7;">
+      Files come from <code>python -m caplab_save.map_dump &lt;SAV&gt; &lt;out_dir&gt;</code>
+    </div>
+  </div>
+  <div id="map-wrap">
+    <canvas id="map-canvas"></canvas>
+    <div id="hover-cell"></div>
+    <div id="selected-cell"></div>
+  </div>
+  <div id="status"></div>
+  <div id="legend"></div>
+  <div id="drop-overlay">Drop JSON here</div>
+</div>
+
+<aside id="sidebar">
+  <h2>Map</h2>
+  <div class="meta" id="map-meta"><i>No file loaded.</i></div>
+  <div class="summary" id="map-summary"></div>
+  <h2>Selected cell</h2>
+  <div id="cell-detail">
+    <div class="placeholder">Click a cell on the map.</div>
+  </div>
+</aside>
+
+<script>
+"use strict";
+
+// ============================ STATE ============================
+const state = {
+  data: null,
+  width: 0, height: 0,
+  cells: [],
+  cellSize: 4,
+  mode: "game",
+  zoom: 1,
+  pan: {x: 0, y: 0},
+  hover: null,
+  selected: null,
+  buffer: null,
+  bufferCtx: null,
+  showRoads: true,
+  showGrid: false,
+  diamond: true,
+  ranges: null,
+  firms: {},   // recno (string) -> firm info from JSON
+  groups: {},  // recno (string) -> group info
+  sites: {},   // recno (string) -> site info (raw deposits)
+  // Categorical color caches:
+  typeFlagPalette: new Map(),
+  spritePalette: new Map(),
+  ownerPalette: new Map(),
+};
+
+// ============================ DOM ==============================
+const $ = (id) => document.getElementById(id);
+const fileInput = $("file-input");
+const modeSel = $("mode");
+const cellSizeSlider = $("cell-size");
+const cellSizeVal = $("cell-size-val");
+const fitBtn = $("fit-btn");
+const resetBtn = $("reset-btn");
+const showRoadsCb = $("show-roads");
+const showGridCb = $("show-grid");
+const diamondCb = $("diamond");
+const mapArea = $("map-area");
+const mapWrap = $("map-wrap");
+const canvas = $("map-canvas");
+const ctx = canvas.getContext("2d");
+const hoverEl = $("hover-cell");
+const selectedEl = $("selected-cell");
+const statusEl = $("status");
+const legendEl = $("legend");
+const emptyState = $("empty-state");
+const mapMeta = $("map-meta");
+const mapSummary = $("map-summary");
+const cellDetail = $("cell-detail");
+
+// ============================ COLORS ===========================
+function gradient(t, c0, c1) {
+  return [
+    Math.round(c0[0] + (c1[0] - c0[0]) * t),
+    Math.round(c0[1] + (c1[1] - c0[1]) * t),
+    Math.round(c0[2] + (c1[2] - c0[2]) * t),
+  ];
+}
+function gradient3(t, c0, c1, c2) {
+  if (t < 0.5) return gradient(t / 0.5, c0, c1);
+  return gradient((t - 0.5) / 0.5, c1, c2);
+}
+function rgb(c) { return `rgb(${c[0]},${c[1]},${c[2]})`; }
+function hslToRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+// Stable hash of a number to a color, with cache
+function paletteFor(map, key, sat=55, lit=55) {
+  let c = map.get(key);
+  if (!c) {
+    const hash = ((key * 2654435761) >>> 0);
+    const hue = hash % 360;
+    c = hslToRgb(hue, sat, lit);
+    map.set(key, c);
+  }
+  return c;
+}
+
+// Cell categorization. Predicates extracted verbatim from the in-game
+// debug overlay function FUN_006260f0 in CapMain.exe — these are the
+// canonical bit definitions the engine itself uses.
+//
+//   walkable    = type_flags & 0x01
+//   sailable    = type_flags & 0x02      → water
+//   is_coast    = type_flags & 0x08
+//   has_hill    = (type_flags & 0xf00) == 0x100
+//   is_plant    = (type_flags & 0xf00) == 0x200   (tree/decoration)
+//   is_firm     = (type_flags & 0xf00) == 0x300
+//   is_farm_ext = (type_flags & 0xf00) == 0x400
+//   is_building = (type_flags & 0xf00) == 0x600
+//   is_road     = walker_terrain != 0       (NOT a tile_type bit!)
+function classify(cell) {
+  // Prefer the dumper-provided category when available.
+  if (cell.category) return cell.category;
+  // Fall back: derive from the predicates (also handles legacy JSONs).
+  const tf = cell.type_flags;
+  const tt = (tf & 0xf00) >> 8;
+  if ((cell.walker_terrain || 0) !== 0) return "road";
+  if (tt === 2) return "plant";
+  if (tt === 3) return "firm";
+  if (tt === 4) return "farm_ext";
+  if (tt === 6) return "building";
+  if (tt === 1) return "hill";
+  if (tt === 7) return "tile7_unknown";
+  if (tt === 9) return "tile9_unknown";
+  if (tf & 0x02) return "water";
+  if (tf & 0x08) return "coast";
+  return "land";
+}
+
+// Color palette indexed by category.
+const GAME_COLORS = {
+  water:           [38,  70, 110],   // deep blue
+  coast:           [110, 150, 175],  // light blue / shallow
+  land:            [165, 175, 110],  // grass green / olive
+  hill:            [140, 110,  80],  // brown
+  road:            [125, 125, 130],  // medium gray
+  plant:           [55,  120,  60],  // forest green
+  firm:            [220,  80,  80],  // red
+  farm_ext:        [220, 175, 100],  // wheat yellow
+  building:        [180, 130, 100],  // warm brown (residential)
+  tile7_unknown:   [200, 100, 200],  // magenta (unknown high tile_type)
+  tile9_unknown:   [200, 200, 100],  // yellow
+  unknown:         [255,   0, 255],  // bright magenta — should not appear
+};
+const GAME_LABELS = {
+  water:           "water (sailable)",
+  coast:           "coast",
+  land:            "open land (grass)",
+  hill:            "hill",
+  road:            "road",
+  plant:           "plant / tree",
+  firm:            "firm",
+  farm_ext:        "farm extension",
+  building:        "building",
+  tile7_unknown:   "tile_type 7 (?)",
+  tile9_unknown:   "tile_type 9 (?)",
+};
+
+function colorFor(cell, mode, ranges) {
+  switch (mode) {
+    case "game": {
+      const cat = classify(cell);
+      let base = GAME_COLORS[cat] || GAME_COLORS.unknown;
+      // For walkable empty land, modulate by walker_terrain so you can
+      // see road approach corridors / variations.
+      if (cat === "land") {
+        const wt = cell.walker_terrain;
+        // wt 1-15 → small lightness shift
+        const shift = ((wt * 17) % 36) - 18;
+        base = [
+          Math.max(0, Math.min(255, base[0] + shift)),
+          Math.max(0, Math.min(255, base[1] + shift)),
+          Math.max(0, Math.min(255, base[2] + Math.floor(shift / 2))),
+        ];
+      }
+      // Apply zone-tier brightening for urban-edge / town-interior
+      if (cat !== "water" && cell.zone_tier === "town-interior") {
+        base = [
+          Math.min(255, base[0] + 12),
+          Math.min(255, base[1] + 8),
+          Math.min(255, base[2] - 8),
+        ];
+      }
+      return base;
+    }
+    case "tile_type": {
+      const cat = classify(cell);
+      return GAME_COLORS[cat] || GAME_COLORS.unknown;
+    }
+    case "walker_terrain": {
+      const wt = cell.walker_terrain;
+      if (wt === 0) return [38, 70, 105]; // water
+      // Map 1-15 to a green-yellow gradient
+      const t = (wt - 1) / 14;
+      return gradient(t, [70, 130, 70], [220, 200, 100]);
+    }
+    case "type_flags": {
+      return paletteFor(state.typeFlagPalette, cell.type_flags, 60, 55);
+    }
+    case "zone_tier": {
+      switch (cell.zone_tier) {
+        case "town-interior":  return [255, 220, 130];
+        case "urban-edge":     return [220, 140, 80];
+        case "suburban-edge":  return [150, 200, 140];
+        default:               return [55, 70, 80];  // rural
+      }
+    }
+    case "land_value": {
+      const v = cell.land_value;
+      if (v <= 0) return [25, 25, 30];
+      const t = Math.min(1, v / (ranges.land_value_max || 50));
+      return gradient3(t, [40, 90, 40], [220, 200, 60], [220, 60, 60]);
+    }
+    case "dev_level": {
+      const v = cell.dev_level;
+      if (v === 0) return [25, 25, 30];
+      const t = Math.min(1, v / 100);
+      return gradient(t, [30, 50, 80], [180, 220, 255]);
+    }
+    case "traffic_index": {
+      const v = cell.traffic_index;
+      if (v === 0) return [25, 25, 30];
+      const t = Math.min(1, v / 100);
+      return gradient(t, [50, 30, 30], [255, 80, 60]);
+    }
+    case "firm_type": {
+      const f = firmFor(cell);
+      if (!f) return [25, 25, 30];
+      return paletteFor(state.typeFlagPalette, f.firm_type, 65, 60);
+    }
+    case "owner": {
+      // Resolve firm cells through firms[feature_recno] -> owner Group.
+      // Highlight player/government/AI categorically; for unresolved
+      // firm cells (firms not loaded), fall back to feature_recno hash.
+      const f = firmFor(cell);
+      if (f) {
+        const g = groupFor(f.owner_group_recno);
+        if (g) {
+          if (g.label === "player")     return [110, 168, 255]; // accent blue
+          if (g.label === "government") return [255, 184, 77];  // accent warm
+          if (g.label === "ai")         return paletteFor(state.ownerPalette,
+                                                          f.owner_group_recno, 60, 55);
+        }
+        return paletteFor(state.ownerPalette, f.owner_group_recno, 60, 55);
+      }
+      const o = cell.feature_recno;
+      if (!o) return [25, 25, 30];
+      return paletteFor(state.ownerPalette, 1000000 + o, 30, 35);
+    }
+    case "sprite_index": {
+      const si = cell.sprite_index;
+      if (!si) return [25, 25, 30];
+      return paletteFor(state.spritePalette, si, 50, 55);
+    }
+  }
+  return [128, 128, 128];
+}
+
+// ============================ RENDER ===========================
+function computeRanges(cells) {
+  let lvMax = 0, dvMax = 0, trMax = 0;
+  for (const c of cells) {
+    if (c.land_value > lvMax) lvMax = c.land_value;
+    if (c.dev_level > dvMax) dvMax = c.dev_level;
+    if (c.traffic_index > trMax) trMax = c.traffic_index;
+  }
+  return { land_value_max: lvMax, dev_level_max: dvMax, traffic_index_max: trMax };
+}
+
+function summarizeCells(cells) {
+  const cats = {};
+  const firmTypes = {};   // firm_type_name -> cell count
+  const ownerGroups = {}; // group_recno -> {label, name, cells}
+  let withFeature = 0;
+  for (const c of cells) {
+    const k = classify(c);
+    cats[k] = (cats[k] || 0) + 1;
+    if (c.feature_recno) withFeature++;
+    if (c.is_firm) {
+      const f = firmFor(c);
+      if (f) {
+        firmTypes[f.firm_type_name] = (firmTypes[f.firm_type_name] || 0) + 1;
+        const g = groupFor(f.owner_group_recno);
+        const key = f.owner_group_recno;
+        if (!ownerGroups[key]) {
+          ownerGroups[key] = {
+            recno: f.owner_group_recno,
+            name:  g ? g.name  : `group_${key}`,
+            label: g ? g.label : "?",
+            cells: 0,
+          };
+        }
+        ownerGroups[key].cells++;
+      }
+    }
+  }
+  return { cats, firmTypes, ownerGroups, withFeature, total: cells.length };
+}
+
+function render() {
+  if (!state.data) return;
+  const { width: W, height: H, cells, mode, cellSize } = state;
+  const ranges = state.ranges;
+
+  if (!state.buffer || state.buffer.width !== W || state.buffer.height !== H) {
+    state.buffer = document.createElement("canvas");
+    state.buffer.width = W;
+    state.buffer.height = H;
+    state.bufferCtx = state.buffer.getContext("2d");
+  }
+  const bctx = state.bufferCtx;
+  const img = bctx.createImageData(W, H);
+  const data = img.data;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const cell = cells[y * W + x];
+      let c = colorFor(cell, mode, ranges);
+      // Optional road overlay (when not already in game/tile_type mode)
+      const cellIsRoad = cell.is_road !== undefined
+        ? cell.is_road
+        : (cell.walker_terrain || 0) !== 0;
+      if (state.showRoads && cellIsRoad
+          && mode !== "game" && mode !== "tile_type") {
+        c = [125, 125, 130];
+      }
+      const i = (y * W + x) * 4;
+      data[i] = c[0]; data[i+1] = c[1]; data[i+2] = c[2]; data[i+3] = 255;
+    }
+  }
+  bctx.putImageData(img, 0, 0);
+
+  const scale = cellSize * state.zoom;
+  canvas.width  = W * scale;
+  canvas.height = H * scale;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(state.buffer, 0, 0, canvas.width, canvas.height);
+
+  // Optional grid overlay (only when cell pixels are big enough)
+  if (state.showGrid && scale >= 6) {
+    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x++) {
+      ctx.moveTo(x * scale + 0.5, 0);
+      ctx.lineTo(x * scale + 0.5, H * scale);
+    }
+    for (let y = 0; y <= H; y++) {
+      ctx.moveTo(0, y * scale + 0.5);
+      ctx.lineTo(W * scale, y * scale + 0.5);
+    }
+    ctx.stroke();
+  }
+
+  applyWrapTransform();
+  updateLegend(ranges);
+  updateOverlays();
+}
+
+// Apply translate + (optional) rotate to the wrapper.
+function applyWrapTransform() {
+  const rot = state.diamond ? "rotate(45deg)" : "";
+  mapWrap.style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) ${rot}`;
+}
+
+function updateOverlays() {
+  // Overlays live inside #map-wrap, so their coords are in the wrap's
+  // local (untranslated, unrotated) frame — no need to add pan or rotate
+  // here; the wrapper transform handles both.
+  const scale = state.cellSize * state.zoom;
+  if (state.hover) {
+    hoverEl.style.display = "block";
+    hoverEl.style.left = (state.hover.x * scale) + "px";
+    hoverEl.style.top  = (state.hover.y * scale) + "px";
+    hoverEl.style.width  = scale + "px";
+    hoverEl.style.height = scale + "px";
+  } else {
+    hoverEl.style.display = "none";
+  }
+  if (state.selected) {
+    selectedEl.style.display = "block";
+    selectedEl.style.left = (state.selected.x * scale - 1) + "px";
+    selectedEl.style.top  = (state.selected.y * scale - 1) + "px";
+    selectedEl.style.width  = (scale + 2) + "px";
+    selectedEl.style.height = (scale + 2) + "px";
+  } else {
+    selectedEl.style.display = "none";
+  }
+}
+
+function legendRow(swatchColor, label) {
+  const sw = `<span class="swatch" style="background:rgb(${swatchColor[0]},${swatchColor[1]},${swatchColor[2]})"></span>`;
+  return `<div class="row">${sw} ${label}</div>`;
+}
+
+function updateLegend(ranges) {
+  let html = "";
+  switch (state.mode) {
+    case "game":
+    case "tile_type": {
+      html = `<div><b>${state.mode === "game" ? "Game-like view" : "Tile type"}</b></div>`;
+      const order = ["water", "coast", "land", "hill", "plant", "road",
+                     "building", "firm", "farm_ext"];
+      for (const k of order) {
+        html += legendRow(GAME_COLORS[k], GAME_LABELS[k]);
+      }
+      break;
+    }
+    case "walker_terrain":
+      html = `<div><b>Walker terrain</b></div>
+        ${legendRow([38, 70, 105], "0 — non-walkable (water)")}
+        ${legendRow([70, 130, 70], "1 — walkable")}
+        ${legendRow([220, 200, 100], "15 — walkable")}`;
+      break;
+    case "type_flags":
+      html = `<div><b>Type flags (each unique value = one color)</b></div>
+        <div style="margin-top:4px; color:var(--text-dim); font-size:10.5px;">
+          See sidebar for the full type_flags hex of clicked cells.
+        </div>`;
+      break;
+    case "zone_tier":
+      html = `<div><b>Zone tier</b></div>
+        ${legendRow([255, 220, 130], "town-interior (0xc0)")}
+        ${legendRow([220, 140, 80], "urban-edge (0x40)")}
+        ${legendRow([150, 200, 140], "suburban-edge (0x80)")}
+        ${legendRow([55, 70, 80], "rural (0x00)")}`;
+      break;
+    case "land_value":
+      html = `<div><b>Land value</b> (max ${ranges.land_value_max.toFixed(2)})</div>
+        ${legendRow([40, 90, 40], "low")}
+        ${legendRow([220, 200, 60], "mid")}
+        ${legendRow([220, 60, 60], "high")}`;
+      break;
+    case "dev_level":
+      html = `<div><b>Dev level</b> (max ${ranges.dev_level_max})</div>
+        ${legendRow([30, 50, 80], "0")}
+        ${legendRow([180, 220, 255], "100")}`;
+      break;
+    case "traffic_index":
+      html = `<div><b>Traffic</b> (max ${ranges.traffic_index_max})</div>
+        ${legendRow([50, 30, 30], "0")}
+        ${legendRow([255, 80, 60], "100")}`;
+      break;
+    case "firm_type":
+      html = `<div><b>Firm type</b> (resolved via FirmArray)</div>
+        <div style="margin-top:4px; color:var(--text-dim); font-size:10.5px;">
+          Each unique firm_type = one color. Non-firm cells are dark.
+          Hover/click for the type name.
+        </div>`;
+      break;
+    case "owner":
+      html = `<div><b>Owner group</b> (resolved)</div>
+        ${legendRow([110, 168, 255], "player")}
+        ${legendRow([255, 184, 77], "government")}
+        <div class="row"><span class="swatch" style="background:rgb(180,140,200)"></span> AI competitor (per-group color)</div>
+        <div style="margin-top:4px; color:var(--text-dim); font-size:10.5px;">
+          Other tiles with feature_recno != 0 (buildings/decorations) get
+          a muted hash color.
+        </div>`;
+      break;
+    case "sprite_index":
+      html = `<div><b>Sprite atlas index</b> (raw — noisy by design)</div>`;
+      break;
+  }
+  legendEl.innerHTML = html;
+}
+
+// ============================ DATA LOAD ========================
+function migrateLegacyCell(c) {
+  // Older dumper called these fields different names. Translate so we can
+  // load any vintage of dump file.
+  if (c.terrain_type !== undefined && c.sprite_index === undefined) {
+    c.sprite_index = c.terrain_type;
+  }
+  if (c.walker_terrain === undefined) {
+    if (c.occupant_recno !== undefined) {
+      c.walker_terrain = c.occupant_recno & 0xff;
+    } else {
+      c.walker_terrain = 0;
+    }
+  }
+  // +0x08 used to be misnamed "owner_recno" / "group_or_nation_recno";
+  // it's actually feature_recno (FirmArray / BuildArray / LandArray index).
+  if (c.feature_recno === undefined) {
+    c.feature_recno = (c.owner_recno !== undefined) ? c.owner_recno
+                    : (c.group_or_nation_recno !== undefined) ? c.group_or_nation_recno
+                    : 0;
+  }
+  if (c.site_recno === undefined) {
+    // older dumper called this "road_recno"
+    c.site_recno = c.road_recno !== undefined ? c.road_recno : 0;
+  }
+  if (c.is_road === undefined) c.is_road = c.tile_type === 5;
+  if (c.is_tree === undefined) c.is_tree = c.tile_type === 2;
+  return c;
+}
+
+// Look up a firm by its feature_recno (returns null if not present).
+function firmFor(cell) {
+  if (!cell.is_firm) return null;
+  return state.firms[String(cell.feature_recno)] || null;
+}
+function groupFor(recno) {
+  return state.groups[String(recno)] || null;
+}
+// Look up a raw-material site for a cell. Only cells with has_site
+// (type_flags & 0x30 == 0x10) can have a real SiteArray entry; others
+// have site_recno pointing into TreeRes / something else and won't
+// resolve.
+function siteFor(cell) {
+  const has = (cell.has_site !== undefined)
+    ? cell.has_site
+    : ((cell.type_flags & 0x30) === 0x10);
+  if (!has) return null;
+  return state.sites[String(cell.site_recno)] || null;
+}
+
+async function loadFile(file) {
+  const text = await file.text();
+  let json;
+  try { json = JSON.parse(text); }
+  catch (e) { alert("Couldn't parse JSON: " + e.message); return; }
+  if (!json.cells || !Array.isArray(json.cells)) {
+    alert("This doesn't look like a town map JSON (no cells array).");
+    return;
+  }
+  // Migrate legacy field names if needed
+  for (const c of json.cells) migrateLegacyCell(c);
+
+  state.data = json;
+  state.width = json.width;
+  state.height = json.height;
+  state.cells = json.cells;
+  state.firms = json.firms || {};
+  state.groups = json.groups || {};
+  state.sites = json.sites || {};
+  state.ranges = computeRanges(json.cells);
+  state.selected = null;
+  state.hover = null;
+  state.typeFlagPalette.clear();
+  state.spritePalette.clear();
+  state.ownerPalette.clear();
+
+  emptyState.classList.add("hidden");
+  fitToView();
+
+  mapMeta.innerHTML = `
+    <div><b>${file.name}</b></div>
+    <div>Town index in save: <b>${json.town_index_in_save ?? "?"}</b></div>
+    <div>Shape: <b>${json.width} × ${json.height}</b> = ${json.cell_count.toLocaleString()} cells</div>
+    <div>Stream: <b>${json.stream_index ?? "?"}</b>, header @ <b>${json.header_offset_hex ?? "?"}</b></div>
+  `;
+  // Cell category summary
+  const summ = summarizeCells(json.cells);
+  let summHtml = "";
+  const order = ["water", "coast", "land", "hill", "plant", "road",
+                 "building", "firm", "farm_ext", "tile7_unknown",
+                 "tile9_unknown"];
+  for (const k of order) {
+    const n = summ.cats[k] || 0;
+    if (!n) continue;
+    const pct = (100 * n / summ.total).toFixed(1);
+    const sw = GAME_COLORS[k];
+    summHtml += `
+      <div style="display:flex; align-items:center; gap:6px; margin:2px 0; font-size:11.5px;">
+        <span style="display:inline-block; width:10px; height:10px; background:rgb(${sw[0]},${sw[1]},${sw[2]}); border:1px solid #000;"></span>
+        ${GAME_LABELS[k]}: <b>${n.toLocaleString()}</b> (${pct}%)
+      </div>`;
+  }
+  // Firm type breakdown (only when firms are embedded in the JSON)
+  if (Object.keys(summ.firmTypes).length) {
+    const sortedFirmTypes = Object.entries(summ.firmTypes)
+      .sort((a, b) => b[1] - a[1]);
+    summHtml += `<div style="margin-top:8px; padding-top:6px;
+                      border-top:1px solid var(--line); font-size:11px;
+                      color:var(--text-dim);">Firm cells by type:</div>`;
+    for (const [name, n] of sortedFirmTypes) {
+      summHtml += `<div style="font-size:11px; margin-left:6px;">
+        ${name}: <b style="color:var(--text)">${n}</b></div>`;
+    }
+  }
+  // Owner-group breakdown for firm cells
+  if (Object.keys(summ.ownerGroups).length) {
+    const sortedOwners = Object.values(summ.ownerGroups)
+      .sort((a, b) => b.cells - a.cells);
+    summHtml += `<div style="margin-top:8px; padding-top:6px;
+                      border-top:1px solid var(--line); font-size:11px;
+                      color:var(--text-dim);">Firm cells by owner group:</div>`;
+    for (const o of sortedOwners) {
+      const lblColor = o.label === "player"     ? "var(--accent)" :
+                       o.label === "government" ? "var(--accent-warm)" :
+                       o.label === "ai"         ? "var(--good)" : "var(--text-dim)";
+      summHtml += `<div style="font-size:11px; margin-left:6px;">
+        <span style="color:${lblColor}">${o.label}</span>
+        ${o.name}: <b style="color:var(--text)">${o.cells}</b></div>`;
+    }
+  }
+  summHtml += `<div style="margin-top:6px; color:var(--text-dim); font-size:11px;">
+    cells with feature_recno != 0: <b style="color:var(--text)">${summ.withFeature.toLocaleString()}</b>
+  </div>`;
+  mapSummary.innerHTML = summHtml;
+
+  cellDetail.innerHTML = '<div class="placeholder">Click a cell on the map.</div>';
+  render();
+  setStatus(`Loaded ${file.name} — ${json.width}×${json.height}`);
+}
+
+// ============================ INTERACTION ======================
+function fitToView() {
+  if (!state.data) return;
+  const rect = mapArea.getBoundingClientRect();
+  // Effective bounding box on screen: when rotated 45° the diamond's
+  // width = height = (W + H) * cellSize / sqrt(2).
+  let sx, sy;
+  if (state.diamond) {
+    const span = (state.width + state.height) * Math.SQRT1_2;  // in cell units
+    sx = rect.width  / span;
+    sy = (rect.height - 20) / span;
+  } else {
+    sx = rect.width  / state.width;
+    sy = (rect.height - 20) / state.height;
+  }
+  const cs = Math.max(1, Math.min(20, Math.floor(Math.min(sx, sy))));
+  state.cellSize = cs;
+  state.zoom = 1;
+  cellSizeSlider.value = cs;
+  cellSizeVal.textContent = cs;
+
+  // Centre the (rotated or not) bounding box.
+  if (state.diamond) {
+    // Diamond corners (canvas-local, before rotation):
+    //   top   : cell(0, 0)         → screen (0, 0)
+    //   right : cell(W, 0)         → screen (W*cs/√2,        W*cs/√2)
+    //   bottom: cell(W, H)         → screen ((W-H)*cs/√2,   (W+H)*cs/√2)
+    //   left  : cell(0, H)         → screen (-H*cs/√2,       H*cs/√2)
+    // So screen bounding box: x in [-H*cs/√2, W*cs/√2], y in [0, (W+H)*cs/√2]
+    const halfW = (state.width + state.height) * cs * Math.SQRT1_2 / 2;
+    const fullH = (state.width + state.height) * cs * Math.SQRT1_2;
+    // top-left of bounding box (in canvas-local coords) = (-H*cs/√2, 0)
+    const bbLeft = -state.height * cs * Math.SQRT1_2;
+    state.pan.x = (rect.width  - 2 * halfW) / 2 - bbLeft;
+    state.pan.y = (rect.height - fullH) / 2;
+  } else {
+    const drawnW = state.width  * cs;
+    const drawnH = state.height * cs;
+    state.pan.x = Math.max(0, (rect.width  - drawnW) / 2);
+    state.pan.y = Math.max(0, (rect.height - drawnH) / 2);
+  }
+  render();
+}
+
+function setStatus(msg) { statusEl.textContent = msg; }
+
+function cellAt(clientX, clientY) {
+  const rect = mapArea.getBoundingClientRect();
+  let x = clientX - rect.left - state.pan.x;
+  let y = clientY - rect.top  - state.pan.y;
+  // Inverse the wrapper's rotation (CSS rotates by +45°, so undo by -45°).
+  if (state.diamond) {
+    const cos = Math.SQRT1_2;   // cos(-45°) = cos(45°)
+    const sin = -Math.SQRT1_2;  // sin(-45°) = -sin(45°)
+    const xr = x * cos - y * sin;
+    const yr = x * sin + y * cos;
+    x = xr; y = yr;
+  }
+  const scale = state.cellSize * state.zoom;
+  const cx = Math.floor(x / scale);
+  const cy = Math.floor(y / scale);
+  if (cx < 0 || cy < 0 || cx >= state.width || cy >= state.height) return null;
+  return { x: cx, y: cy };
+}
+function getCell(x, y) { return state.cells[y * state.width + x]; }
+
+function showCellDetail(x, y) {
+  const cell = getCell(x, y);
+  if (!cell) return;
+  const cat = classify(cell);
+  const labelMap = {
+    firm: "firm", farm_ext: "firmln", building: "bldg",
+    plant: "tree", road: "road", hill: "land",
+    water: "water", coast: "water", land: "empty",
+    tile7_unknown: "empty", tile9_unknown: "empty",
+  };
+  const pillClass = labelMap[cat] || "empty";
+
+  const yn = (b) => b ? '<span class="v true">yes</span>' : '<span class="v false">no</span>';
+  // Helpful when loading legacy JSONs that didn't have these flags
+  const has = (k, fallback) => (cell[k] !== undefined ? cell[k] : fallback);
+  const isRoad     = has("is_road",     (cell.walker_terrain || 0) !== 0);
+  const sailable   = has("sailable",    (cell.type_flags & 0x02) !== 0);
+  const isCoast    = has("is_coast",    (cell.type_flags & 0x08) !== 0);
+  const isHarbor   = has("is_harbor",   (cell.type_flags & 0x1000) !== 0);
+  const hasSite    = has("has_site",    (cell.type_flags & 0x30) === 0x10);
+  const walkable   = has("walkable",    (cell.type_flags & 0x01) !== 0);
+  const isPlant    = has("is_plant",    cell.tile_type === 2);
+  const isFirm     = has("is_firm",     cell.tile_type === 3);
+  const isFarmExt  = has("is_farm_ext", cell.tile_type === 4);
+  const isBuilding = has("is_building", cell.tile_type === 6);
+  const hasHill    = has("has_hill",    cell.tile_type === 1);
+
+  const fields = [
+    ["type_flags",       "0x" + cell.type_flags.toString(16).padStart(4, "0")],
+    ["  category",       `<span class="pill ${pillClass}">${GAME_LABELS[cat]}</span>`],
+    ["  tile_type",      cell.tile_type + " (0x" + (cell.tile_type * 256).toString(16).padStart(3,"0") + ")"],
+    ["  is_road",        yn(isRoad)],
+    ["  is_plant",       yn(isPlant)],
+    ["  is_firm",        yn(isFirm)],
+    ["  is_farm_ext",    yn(isFarmExt)],
+    ["  is_building",    yn(isBuilding)],
+    ["  has_hill",       yn(hasHill)],
+    ["  sailable",       yn(sailable)],
+    ["  is_coast",       yn(isCoast)],
+    ["  is_harbor",      yn(isHarbor)],
+    ["  walkable",       yn(walkable)],
+    ["  has_site",       yn(hasSite)],
+    ["  zone_tier",      cell.zone_tier || "—"],
+    ["walker_terrain",   cell.walker_terrain + (cell.walker_terrain === 0 ? "" : " (road sprite)")],
+    ["sprite_index",     cell.sprite_index],
+    ["feature_recno",    cell.feature_recno || "—"],
+    ["sub_recno",        cell.sub_recno || "—"],
+    ["site_recno",       cell.site_recno || "—"],
+    ["flags_b",          "0x" + cell.flags_b.toString(16).padStart(2, "0")],
+    ["land_value",       cell.land_value.toFixed(3)],
+    ["dev_level",        cell.dev_level],
+    ["traffic_index",    cell.traffic_index],
+    ["congestion_index", cell.congestion_index],
+    ["zone_type",        cell.zone_type],
+    ["extra_bytes",      cell.extra_bytes || "—"],
+  ];
+  let rows = "";
+  for (const [k, v] of fields) {
+    rows += `<div class="field"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+  }
+  // Resolved firm + owner block (only when cell.is_firm && firm data loaded)
+  let firmBlock = "";
+  const f = firmFor(cell);
+  if (f) {
+    const g = groupFor(f.owner_group_recno);
+    const lblColor = (g && g.label === "player")     ? "var(--accent)" :
+                     (g && g.label === "government") ? "var(--accent-warm)" :
+                     (g && g.label === "ai")         ? "var(--good)" :
+                                                        "var(--text-dim)";
+    firmBlock = `
+      <div class="cell-info" style="border-color: var(--accent-warm);">
+        <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase;
+                    letter-spacing:0.5px; margin-bottom:6px;">Firm details</div>
+        <div style="font-size:14px; font-weight:600; color:var(--accent-warm);
+                    margin-bottom:6px;">${f.firm_type_name}</div>
+        <div class="field"><span class="k">firm.recno</span><span class="v">${f.recno}</span></div>
+        <div class="field"><span class="k">firm.subtype</span><span class="v">${f.firm_subtype}</span></div>
+        <div class="field"><span class="k">tech_level</span><span class="v">${f.tech_level}</span></div>
+        <div class="field"><span class="k">footprint</span><span class="v">(${f.x1},${f.y1}) – (${f.x2},${f.y2})</span></div>
+        <div class="field"><span class="k">nation</span><span class="v">${f.nation_recno}</span></div>
+        <div class="field" style="border-bottom:none;">
+          <span class="k">owner</span>
+          <span class="v">
+            <span style="color:${lblColor}; font-weight:600;">${(g && g.label) || "?"}</span>
+            ${(g && g.name) || "group_" + f.owner_group_recno}
+            <span style="color:var(--text-dim);">(g${f.owner_group_recno})</span>
+          </span>
+        </div>
+      </div>`;
+  } else if (cell.is_firm) {
+    firmBlock = `
+      <div class="cell-info" style="border-color:var(--text-dim);">
+        <div style="color:var(--text-dim); font-style:italic; font-size:11px;">
+          firm cell with feature_recno=${cell.feature_recno},
+          but no firm record loaded (open a JSON dumped with the v2 dumper
+          to see firm details).
+        </div>
+      </div>`;
+  }
+
+  // Resolved raw-material deposit (if any)
+  let siteBlock = "";
+  const s = siteFor(cell);
+  if (s) {
+    const cls = s.site_class === "forest" ? "var(--good)" : "var(--accent-warm)";
+    siteBlock = `
+      <div class="cell-info" style="border-color: ${cls};">
+        <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase;
+                    letter-spacing:0.5px; margin-bottom:6px;">Raw deposit</div>
+        <div style="font-size:14px; font-weight:600; color:${cls};
+                    margin-bottom:6px;">${s.item_name}
+          <span style="font-weight:400; color:var(--text-dim); font-size:11px;">
+            (${s.site_class})
+          </span>
+        </div>
+        <div class="field"><span class="k">site.recno</span><span class="v">${s.recno}</span></div>
+        <div class="field"><span class="k">item_type</span><span class="v">${s.item_type}</span></div>
+        <div class="field"><span class="k">capacity</span><span class="v">${(s.capacity || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}</span></div>
+        <div class="field"><span class="k">supply_rate</span><span class="v">${(s.supply_rate || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}</span></div>
+        <div class="field" style="border-bottom:none;">
+          <span class="k">utilization</span>
+          <span class="v">${(s.utilization || 0).toFixed(2)}</span>
+        </div>
+      </div>`;
+  } else if (cell.has_site || (cell.type_flags & 0x30) === 0x10) {
+    siteBlock = `
+      <div class="cell-info" style="border-color:var(--text-dim);">
+        <div style="color:var(--text-dim); font-style:italic; font-size:11px;">
+          has_site bit set (site_recno=${cell.site_recno}) but no SiteArray
+          record loaded; re-dump with the v3 dumper to see deposits.
+        </div>
+      </div>`;
+  }
+
+  cellDetail.innerHTML = firmBlock + siteBlock + `
+    <div class="cell-info">
+      <div class="coord">(${x}, ${y})</div>
+      ${rows}
+    </div>
+  `;
+}
+
+mapArea.addEventListener("mousemove", (e) => {
+  if (!state.data) return;
+  if (panState.active) return;
+  const c = cellAt(e.clientX, e.clientY);
+  if (c) {
+    state.hover = c;
+    const cell = getCell(c.x, c.y);
+    const cat = classify(cell);
+    let extra = "";
+    const f = firmFor(cell);
+    if (f) {
+      const g = groupFor(f.owner_group_recno);
+      extra = ` — ${f.firm_type_name}` + (g ? ` (${g.label}: ${g.name})` : "");
+    }
+    const s = siteFor(cell);
+    if (s) extra += ` — ${s.item_name} (${s.site_class})`;
+    setStatus(`(${c.x}, ${c.y}) — ${GAME_LABELS[cat]}, walker_terrain=${cell.walker_terrain}, lv=${cell.land_value.toFixed(2)}, dev=${cell.dev_level}${extra}`);
+  } else {
+    state.hover = null;
+    setStatus("");
+  }
+  updateOverlays();
+});
+mapArea.addEventListener("mouseleave", () => {
+  state.hover = null; setStatus(""); updateOverlays();
+});
+mapArea.addEventListener("click", (e) => {
+  if (!state.data) return;
+  if (panState.moved) return;
+  const c = cellAt(e.clientX, e.clientY);
+  if (c) {
+    state.selected = c;
+    showCellDetail(c.x, c.y);
+    updateOverlays();
+  }
+});
+
+mapArea.addEventListener("wheel", (e) => {
+  if (!state.data) return;
+  e.preventDefault();
+  const rect = mapArea.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const dz = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  const newZoom = Math.max(0.25, Math.min(8, state.zoom * dz));
+  const scaleOld = state.cellSize * state.zoom;
+  const scaleNew = state.cellSize * newZoom;
+  const ratio = scaleNew / scaleOld;
+  state.pan.x = mx - (mx - state.pan.x) * ratio;
+  state.pan.y = my - (my - state.pan.y) * ratio;
+  state.zoom = newZoom;
+  render();
+}, { passive: false });
+
+const panState = { active: false, startX: 0, startY: 0, panX: 0, panY: 0, moved: false };
+mapArea.addEventListener("mousedown", (e) => {
+  if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+    panState.active = true;
+    panState.startX = e.clientX;
+    panState.startY = e.clientY;
+    panState.panX = state.pan.x;
+    panState.panY = state.pan.y;
+    panState.moved = false;
+    mapArea.classList.add("panning");
+    e.preventDefault();
+  } else {
+    panState.moved = false;
+  }
+});
+window.addEventListener("mousemove", (e) => {
+  if (!panState.active) return;
+  state.pan.x = panState.panX + (e.clientX - panState.startX);
+  state.pan.y = panState.panY + (e.clientY - panState.startY);
+  panState.moved = true;
+  applyWrapTransform();
+  updateOverlays();
+});
+window.addEventListener("mouseup", () => {
+  if (panState.active) { panState.active = false; mapArea.classList.remove("panning"); }
+});
+
+window.addEventListener("keydown", (e) => {
+  if (!state.data) return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  const step = 40;
+  if (e.key === "ArrowLeft")  { state.pan.x += step; applyWrapTransform(); }
+  if (e.key === "ArrowRight") { state.pan.x -= step; applyWrapTransform(); }
+  if (e.key === "ArrowUp")    { state.pan.y += step; applyWrapTransform(); }
+  if (e.key === "ArrowDown")  { state.pan.y -= step; applyWrapTransform(); }
+  if (e.key === "f" || e.key === "F") fitToView();
+  if (e.key === "0") { state.zoom = 1; render(); }
+});
+
+window.addEventListener("dragover", (e) => { e.preventDefault(); document.body.classList.add("dragging"); });
+window.addEventListener("dragleave", (e) => {
+  if (e.clientX === 0 && e.clientY === 0) document.body.classList.remove("dragging");
+});
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  document.body.classList.remove("dragging");
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+fileInput.addEventListener("change", (e) => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+modeSel.addEventListener("change", () => {
+  state.mode = modeSel.value;
+  render();
+});
+cellSizeSlider.addEventListener("input", () => {
+  state.cellSize = +cellSizeSlider.value;
+  cellSizeVal.textContent = state.cellSize;
+  render();
+});
+showRoadsCb.addEventListener("change", () => { state.showRoads = showRoadsCb.checked; render(); });
+showGridCb.addEventListener("change",  () => { state.showGrid  = showGridCb.checked;  render(); });
+diamondCb.addEventListener("change",   () => {
+  state.diamond = diamondCb.checked;
+  if (state.data) fitToView(); else render();
+});
+fitBtn.addEventListener("click", fitToView);
+resetBtn.addEventListener("click", () => {
+  state.zoom = 1; state.pan = {x: 0, y: 0}; render();
+});
+
+setStatus("Drag a JSON file or use the file picker. Wheel to zoom, Shift+drag or middle-drag to pan, F to fit.");
+</script>
+</body>
+</html>
