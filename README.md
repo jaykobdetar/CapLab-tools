@@ -8,4 +8,4 @@ Various tools for Capitalism Lab that I personally find useful, but that don't m
 
 ## Libraries
 
-- **caplab_sim**, **caplab_save** — Shared library packages used by the tools above. Not run directly; vendored into each tool's folder for self-contained installs.
+- **caplab_sim**, **caplab_save** — Shared library packages used by the tools above.
